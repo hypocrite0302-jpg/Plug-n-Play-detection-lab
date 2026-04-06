@@ -7,7 +7,7 @@ Welcome to the lab. If you're here, you're either a gladiator in the SOC arena o
 ## 1. The Vision (The "Why")
 Let's be real: setting up a proper SOC lab usually feels like trying to assemble IKEA furniture in the dark with missing parts. You spend more time troubleshooting Docker networks and Java heap sizes than actually hunting threats. 
 
-We built this lab to kill that friction. It's a one-command bootstrap that spins up an Elastic Stack (8.12.2), configures telemetry via Filebeat and auditd, and arms you with Atomic Red Team and Sigma CLI. It’s built for the developer who wants to move fast without breaking their sanity.
+We built this lab to kill that friction. It's a one-command bootstrap that spins up an Elastic Stack (8.12.2), configures telemetry via Filebeat and auditd, and arms you with Atomic Red Team and Sigma CLI. From the repo root, the setup path is simply `bash install.sh`. It’s built for the developer who wants to move fast without breaking their sanity.
 
 ## 2. The Blueprint (The "How")
 The architecture is designed for "accessible precision." We're leveraging Docker to keep the Elastic Stack isolated and reproducible, while using native Linux services (`auditd`, `Filebeat`) to capture high-fidelity telemetry from the host.

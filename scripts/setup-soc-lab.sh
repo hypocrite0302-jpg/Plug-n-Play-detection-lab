@@ -3,6 +3,101 @@
 set -e
 set -o pipefail
 
+ELASTIC_VERSION="8.12.2"
+LAB="soc-lab"
+DEFAULT_USER="default"
+FILEBEAT_DEB="filebeat-${ELASTIC_VERSION}-amd64.deb"
+ATOMIC_DIR="$HOME/atomic-red-team"
+
+command_exists() {
+command -v "$1" >/dev/null 2>&1
+}
+
+start_service() {
+local SERVICE_NAME="$1"
+
+if command_exists systemctl && sudo systemctl start "$SERVICE_NAME" >/dev/null 2>&1; then
+return 0
+fi
+
+if command_exists service && sudo service "$SERVICE_NAME" start >/dev/null 2>&1; then
+return 0
+fi
+
+error_exit "
+Unable to start service: $SERVICE_NAME
+
+Fix:
+If using systemd:
+sudo systemctl start $SERVICE_NAME
+
+If using WSL without systemd:
+sudo service $SERVICE_NAME start
+"
+}
+
+enable_service() {
+local SERVICE_NAME="$1"
+
+if command_exists systemctl && sudo systemctl enable "$SERVICE_NAME" >/dev/null 2>&1; then
+return 0
+fi
+
+if command_exists update-rc.d && sudo update-rc.d "$SERVICE_NAME" defaults >/dev/null 2>&1; then
+return 0
+fi
+
+echo "[INFO] Skipping persistent enable for $SERVICE_NAME"
+}
+
+restart_service() {
+local SERVICE_NAME="$1"
+
+if command_exists systemctl && sudo systemctl restart "$SERVICE_NAME" >/dev/null 2>&1; then
+return 0
+fi
+
+if command_exists service && sudo service "$SERVICE_NAME" restart >/dev/null 2>&1; then
+return 0
+fi
+
+error_exit "
+Unable to restart service: $SERVICE_NAME
+
+Fix:
+If using systemd:
+sudo systemctl restart $SERVICE_NAME
+
+If using WSL without systemd:
+sudo service $SERVICE_NAME restart
+"
+}
+
+wait_for_http() {
+local SERVICE_NAME="$1"
+local URL="$2"
+local ATTEMPTS="${3:-30}"
+
+echo "[INFO] Waiting for $SERVICE_NAME..."
+
+for ((i=1; i<=ATTEMPTS; i++)); do
+if curl -fsS "$URL" >/dev/null 2>&1; then
+echo "[OK] $SERVICE_NAME is responding"
+return 0
+fi
+
+sleep 5
+done
+
+error_exit "
+$SERVICE_NAME did not become ready in time.
+
+Fix:
+docker ps
+docker logs ${SERVICE_NAME,,}
+"
+}
+
 #############################
 # ERROR HANDLER
 #############################
@@ -31,7 +126,9 @@ trap 'error_exit "A command failed unexpectedly. Ensure Docker is running and po
 # STYLISH BANNER
 #############################
 
+if [ -t 1 ] && command_exists clear; then
 clear
+fi
 
 cat << "EOF"
 
@@ -54,18 +151,17 @@ sleep 2
 # CREATE DEFAULT USER
 ##################################
 
-if id "default" &>/dev/null; then
-echo "[INFO] User 'default' already exists"
+if id "$DEFAULT_USER" &>/dev/null; then
+echo "[INFO] User '$DEFAULT_USER' already exists"
 else
 
 echo "[INFO] Creating default user..."
 
-sudo useradd -m -s /bin/bash default || error_exit "User creation failed."
+sudo useradd -m -s /bin/bash "$DEFAULT_USER" || error_exit "User creation failed."
 
-echo "default:default" | sudo chpasswd
+echo "${DEFAULT_USER}:${DEFAULT_USER}" | sudo chpasswd
 
-sudo usermod -aG sudo default
-sudo usermod -aG docker default
+sudo usermod -aG sudo "$DEFAULT_USER"
 
 echo "[OK] Default user created"
 
@@ -77,7 +173,8 @@ fi
 
 echo "[INFO] Checking internet connectivity..."
 
-ping -c 1 google.com >/dev/null 2>&1 || error_exit "
+if command_exists curl; then
+curl -fsSL --max-time 10 https://artifacts.elastic.co >/dev/null 2>&1 || error_exit "
 Internet connectivity failed.
 
 Fix:
@@ -85,43 +182,22 @@ Check network connectivity
 Ensure DNS resolution works
 
 Test manually:
-ping google.com
+curl -I https://artifacts.elastic.co
 "
-
-echo "[OK] Internet working"
-
-##################################
-# CHECK PORTS
-##################################
-
-PORTS=(9200 5601 8220)
-
-echo "[INFO] Checking required ports..."
-
-for PORT in "${PORTS[@]}"; do
-
-if sudo lsof -i:$PORT >/dev/null 2>&1 ; then
-
-error_exit "
-Port $PORT is already in use.
+else
+getent hosts artifacts.elastic.co >/dev/null 2>&1 || error_exit "
+Internet connectivity failed.
 
 Fix:
+Check network connectivity
+Ensure DNS resolution works
 
-Find conflicting service:
-sudo lsof -i:$PORT
-
-Stop service:
-sudo kill -9 PID
-
-OR stop container:
-docker stop container_id
+Test manually:
+getent hosts artifacts.elastic.co
 "
-
 fi
 
-done
-
-echo "[OK] Ports available"
+echo "[OK] Internet working"
 
 ##################################
 # INSTALL DEPENDENCIES
@@ -143,11 +219,14 @@ jq \
 git \
 python3 \
 python3-pip \
+python3-venv \
 auditd \
 apt-transport-https \
 ca-certificates \
 gnupg \
-lsb-release || error_exit "
+lsb-release \
+lsof \
+pipx || error_exit "
 Package installation failed.
 
 Fix:
@@ -156,6 +235,39 @@ sudo apt --fix-broken install
 "
 
 echo "[OK] Dependencies installed"
+
+##################################
+# CHECK PORTS
+##################################
+
+PORTS=(9200 5601 8220)
+
+echo "[INFO] Checking required ports..."
+
+for PORT in "${PORTS[@]}"; do
+
+if sudo lsof -i:"$PORT" >/dev/null 2>&1 ; then
+
+error_exit "
+Port $PORT is already in use.
+
+Fix:
+
+Find conflicting service:
+sudo lsof -i:$PORT
+
+Stop service:
+sudo kill -9 PID
+
+OR stop container:
+docker stop container_id
+"
+
+fi
+
+done
+
+echo "[OK] Ports available"
 
 ##################################
 # INSTALL DOCKER
@@ -180,11 +292,21 @@ sudo apt update
 
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-sudo systemctl start docker
+start_service docker
 
 fi
 
-docker info >/dev/null 2>&1 || error_exit "
+if ! getent group docker >/dev/null 2>&1; then
+sudo groupadd docker >/dev/null 2>&1 || true
+fi
+
+for GROUP_USER in "$USER" "$DEFAULT_USER"; do
+if id "$GROUP_USER" >/dev/null 2>&1; then
+sudo usermod -aG docker "$GROUP_USER"
+fi
+done
+
+sudo docker info >/dev/null 2>&1 || error_exit "
 Docker daemon not running.
 
 Fix:
@@ -197,12 +319,11 @@ sudo systemctl start docker
 "
 
 echo "[OK] Docker ready"
+echo "[INFO] Docker group membership updated for '$USER' and '$DEFAULT_USER'"
 
 ##################################
 # LAB DIRECTORY
 ##################################
-
-LAB="soc-lab"
 
 mkdir -p ~/$LAB
 cd ~/$LAB
@@ -213,11 +334,11 @@ cd ~/$LAB
 
 echo "[INFO] Writing docker compose..."
 
-cat > docker-compose.yml << 'EOF'
+cat > docker-compose.yml << EOF
 services:
 
  elasticsearch:
-  image: docker.elastic.co/elasticsearch/elasticsearch:8.12.2
+  image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION}
   container_name: elasticsearch
   environment:
    - discovery.type=single-node
@@ -230,7 +351,7 @@ services:
   restart: unless-stopped
 
  kibana:
-  image: docker.elastic.co/kibana/kibana:8.12.2
+  image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION}
   container_name: kibana
   environment:
    - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
@@ -242,7 +363,7 @@ services:
   restart: unless-stopped
 
  fleet-server:
-  image: docker.elastic.co/beats/elastic-agent:8.12.2
+  image: docker.elastic.co/beats/elastic-agent:${ELASTIC_VERSION}
   container_name: fleet-server
   environment:
    - FLEET_SERVER_ENABLE=1
@@ -267,16 +388,16 @@ echo "[OK] Docker compose created"
 
 echo "[INFO] Starting Elastic stack..."
 
-docker compose pull || error_exit "
+sudo docker compose pull || error_exit "
 Image pull failed.
 
 Fix:
 Check internet connectivity.
 Try manually:
-docker pull docker.elastic.co/elasticsearch/elasticsearch:8.12.2
+docker pull docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION}
 "
 
-docker compose up -d || error_exit "
+sudo docker compose up -d || error_exit "
 Container startup failed.
 
 Fix:
@@ -286,15 +407,33 @@ docker logs kibana
 
 echo "[OK] Elastic stack started"
 
+wait_for_http "Elasticsearch" "http://localhost:9200" 24
+wait_for_http "Kibana" "http://localhost:5601" 60
+
 ##################################
 # FILEBEAT
 ##################################
 
 echo "[INFO] Installing Filebeat..."
 
-curl -L -O https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-8.12.2-amd64.deb
+if dpkg -s filebeat >/dev/null 2>&1; then
+echo "[INFO] Filebeat already installed"
+else
+curl -fsSL -o "$FILEBEAT_DEB" "https://artifacts.elastic.co/downloads/beats/filebeat/$FILEBEAT_DEB" || error_exit "
+Filebeat download failed.
 
-sudo dpkg -i filebeat-8.12.2-amd64.deb
+Fix:
+curl -I https://artifacts.elastic.co/downloads/beats/filebeat/$FILEBEAT_DEB
+"
+
+sudo dpkg -i "$FILEBEAT_DEB" || sudo apt-get install -f -y || error_exit "
+Filebeat installation failed.
+
+Fix:
+sudo apt-get install -f
+sudo dpkg -i $FILEBEAT_DEB
+"
+fi
 
 ##################################
 # CONFIGURE FILEBEAT
@@ -318,10 +457,12 @@ setup.kibana:
   host: "localhost:5601"
 EOF
 
-sudo filebeat modules enable system
+if ! sudo filebeat modules enable system >/dev/null 2>&1; then
+echo "[INFO] Filebeat system module may already be enabled"
+fi
 
-sudo systemctl restart filebeat
-sudo systemctl enable filebeat
+restart_service filebeat
+enable_service filebeat
 
 echo "[OK] Filebeat running"
 
@@ -331,7 +472,11 @@ echo "[OK] Filebeat running"
 
 echo "[INFO] Enabling process telemetry..."
 
+if sudo auditctl -l | grep -q "exec_log"; then
+echo "[INFO] Process telemetry rule already enabled"
+else
 sudo auditctl -a always,exit -F arch=b64 -S execve -k exec_log
+fi
 
 echo "[OK] Process telemetry enabled"
 
@@ -341,10 +486,11 @@ echo "[OK] Process telemetry enabled"
 
 echo "[INFO] Installing Atomic Red Team..."
 
-mkdir -p ~/atomic-red-team
-cd ~/atomic-red-team
-
-git clone https://github.com/redcanaryco/atomic-red-team.git
+if [ -d "$ATOMIC_DIR/.git" ]; then
+git -C "$ATOMIC_DIR" pull --ff-only
+else
+git clone https://github.com/redcanaryco/atomic-red-team.git "$ATOMIC_DIR"
+fi
 
 ##################################
 # INSTALL SIGMA
@@ -352,7 +498,14 @@ git clone https://github.com/redcanaryco/atomic-red-team.git
 
 echo "[INFO] Installing Sigma CLI..."
 
-pip3 install sigma-cli
+export PATH="$HOME/.local/bin:$PATH"
+pipx ensurepath >/dev/null 2>&1 || true
+
+if pipx list 2>/dev/null | grep -q "package sigma-cli "; then
+pipx upgrade sigma-cli
+else
+pipx install sigma-cli
+fi
 
 ##################################
 # FINISHED

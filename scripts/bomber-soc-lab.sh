@@ -105,5 +105,5 @@ echo "Your system is now clean."
 echo
 echo "You can rebuild the lab anytime using:"
 echo
-echo "./setup-soc-lab.sh"
+echo "bash install.sh"
 echo
