@@ -27,7 +27,7 @@ return 0
 }
 
 sudo() {
-echo "[mock sudo] $*"
+echo "[mock sudo] $*" >&2
 
 local CMD="${1:-}"
 
@@ -46,8 +46,64 @@ return 0
 
 curl() { echo "[mock curl] $*"; return 0; }
 getent() { echo "[mock getent] $*"; return 0; }
-docker() { echo "[mock docker] $*"; return 0; }
 git() { echo "[mock git] $*"; return 0; }
+
+docker() {
+local SUBCOMMAND="${1:-}"
+
+if [ "$SUBCOMMAND" = "ps" ]; then
+local FILTER=""
+
+shift
+
+while [ $# -gt 0 ]; do
+if [ "$1" = "-f" ] || [ "$1" = "--filter" ]; then
+FILTER="${2:-}"
+shift 2
+continue
+fi
+
+shift
+done
+
+if [ -n "${MOCK_CONTAINER_CONFLICT_NAME:-}" ] && [ "$FILTER" = "name=^/${MOCK_CONTAINER_CONFLICT_NAME}$" ]; then
+printf '%s\n' "${MOCK_CONTAINER_CONFLICT_ID:-mock-conflict-id}"
+fi
+
+return 0
+fi
+
+if [ "$SUBCOMMAND" = "inspect" ] && [ "${2:-}" = "-f" ]; then
+local TARGET="${4:-}"
+
+if [ "$TARGET" = "${MOCK_CONTAINER_CONFLICT_ID:-mock-conflict-id}" ]; then
+printf '%s\n' "${MOCK_CONTAINER_CONFLICT_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:8.12.2}"
+fi
+
+return 0
+fi
+
+if [ "$SUBCOMMAND" = "rm" ] && [ "${2:-}" = "-f" ]; then
+local TARGET="${3:-}"
+
+echo "[mock docker] $*"
+
+if [ "$TARGET" = "${MOCK_CONTAINER_CONFLICT_ID:-mock-conflict-id}" ] || [ "$TARGET" = "${MOCK_CONTAINER_CONFLICT_NAME:-}" ]; then
+unset MOCK_CONTAINER_CONFLICT_NAME
+unset MOCK_CONTAINER_CONFLICT_ID
+unset MOCK_CONTAINER_CONFLICT_IMAGE
+fi
+
+return 0
+fi
+
+if [ "$SUBCOMMAND" = "info" ]; then
+return 0
+fi
+
+echo "[mock docker] $*"
+return 0
+}
 
 pipx() {
 if [ "${1:-}" = "list" ]; then
