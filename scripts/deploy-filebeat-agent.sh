@@ -107,25 +107,24 @@ load_credentials() {
   local env_file="$LAB_ROOT/.env"
   [[ -f "$env_file" ]] || fail "Elastic lab .env not found at $env_file. Has setup-soc-lab.sh been run?"
 
-  # Source the .env file
-  # shellcheck disable=SC1090
-  source "$env_file" || fail "Failed to parse $env_file"
+  # Parse .env file safely without sourcing (to avoid issues with values like ES_JAVA_OPTS)
+  ELASTIC_USERNAME="elastic"
+  ELASTIC_PASSWORD="$(grep '^ELASTIC_PASSWORD=' "$env_file" | cut -d'=' -f2 | tr -d '\r')"
+  ES_HOST_BIND="$(grep '^ES_HOST_BIND=' "$env_file" | cut -d'=' -f2 | tr -d '\r')"
+  CERT_DIR="$LAB_ROOT/certs"
 
-  # Extract credentials and ports
-  ELASTIC_USERNAME="${ELASTIC_USERNAME:-elastic}"
-  ELASTIC_PASSWORD="${ELASTIC_PASSWORD:-}"
-  CERT_DIR="${CERT_DIR:-$LAB_ROOT/certs}"
-  ES_HOST_PORT="${ES_HOST_PORT:-9200}"
-
-  # Parse port from ES_HOST_BIND if available (format: 127.0.0.1:9200)
-  if [[ -n "${ES_HOST_BIND:-}" && "$ES_HOST_BIND" == *":"* ]]; then
+  # Extract port from ES_HOST_BIND (format: 127.0.0.1:19200)
+  if [[ -n "$ES_HOST_BIND" && "$ES_HOST_BIND" == *":"* ]]; then
     ES_HOST_PORT="${ES_HOST_BIND##*:}"
+  else
+    ES_HOST_PORT="9200"
   fi
 
   [[ -n "$ELASTIC_PASSWORD" ]] || fail "ELASTIC_PASSWORD not found in .env"
   [[ -d "$CERT_DIR/ca" ]] || fail "CA certificate directory not found at $CERT_DIR/ca"
 
   ok "Username: $ELASTIC_USERNAME"
+  ok "Elasticsearch host: ${ES_HOST_BIND%:*}"
   ok "Elasticsearch port: $ES_HOST_PORT"
   ok "CA certificate directory: $CERT_DIR/ca"
 }
@@ -133,16 +132,22 @@ load_credentials() {
 validate_connectivity() {
   section "4/8" "Validate Elasticsearch Connectivity"
 
-  local es_url="https://localhost:${ES_HOST_PORT}/_cluster/health"
+  local es_url="https://127.0.0.1:${ES_HOST_PORT}/_cluster/health"
   local ca_cert="$CERT_DIR/ca/ca.crt"
 
   [[ -f "$ca_cert" ]] || fail "CA certificate not found at $ca_cert"
 
-  info "Testing connection to Elasticsearch..."
-  if curl -fsS --cacert "$ca_cert" -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" "$es_url" >/dev/null 2>&1; then
+  info "Testing connection to Elasticsearch at https://127.0.0.1:${ES_HOST_PORT}..."
+  info "Using credentials: $ELASTIC_USERNAME"
+  
+  if curl -fsSL --cacert "$ca_cert" -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" "$es_url" >/dev/null 2>&1; then
     ok "Successfully connected to Elasticsearch"
   else
-    fail "Failed to connect to Elasticsearch. Check credentials, port, or certificate."
+    warn "Connection attempt failed. Debugging information:"
+    echo ""
+    curl -v --cacert "$ca_cert" -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" "$es_url" 2>&1 | head -40 || true
+    echo ""
+    fail "Failed to connect to Elasticsearch. Verify credentials, port, and that the cluster is healthy."
   fi
 }
 
