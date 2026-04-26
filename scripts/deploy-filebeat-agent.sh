@@ -67,6 +67,7 @@ find_lab_root() {
   section "1/8" "Locate Elastic Lab Root"
 
   if [[ -n "$LAB_ROOT" && -d "$LAB_ROOT" ]]; then
+    LAB_ROOT="$(cd "$LAB_ROOT" && pwd)" || fail "Failed to resolve lab root: $LAB_ROOT"
     info "Using provided lab root: $LAB_ROOT"
     return 0
   fi
@@ -75,7 +76,7 @@ find_lab_root() {
   local candidates=("./elastic-lab" "$HOME/elastic-lab" "/home/*/elastic-lab" "/tmp/elastic-lab")
   for candidate in "${candidates[@]}"; do
     if [[ -d "$candidate" ]]; then
-      LAB_ROOT="$candidate"
+      LAB_ROOT="$(cd "$candidate" && pwd)" || fail "Failed to resolve lab root: $candidate"
       ok "Found Elastic lab at: $LAB_ROOT"
       return 0
     fi
@@ -121,31 +122,36 @@ load_credentials() {
   fi
 
   [[ -n "$ELASTIC_PASSWORD" ]] || fail "ELASTIC_PASSWORD not found in .env"
+  
+  # Verify certificate directory and file exist
+  local ca_cert="$CERT_DIR/ca/ca.crt"
   [[ -d "$CERT_DIR/ca" ]] || fail "CA certificate directory not found at $CERT_DIR/ca"
+  [[ -f "$ca_cert" ]] || fail "CA certificate file not found at $ca_cert"
 
   ok "Username: $ELASTIC_USERNAME"
   ok "Elasticsearch host: ${ES_HOST_BIND%:*}"
   ok "Elasticsearch port: $ES_HOST_PORT"
-  ok "CA certificate directory: $CERT_DIR/ca"
+  ok "CA certificate: $ca_cert"
 }
 
 validate_connectivity() {
   section "4/8" "Validate Elasticsearch Connectivity"
 
-  local es_url="https://127.0.0.1:${ES_HOST_PORT}/_cluster/health"
   local ca_cert="$CERT_DIR/ca/ca.crt"
+  local es_url="https://127.0.0.1:${ES_HOST_PORT}/_cluster/health"
 
   [[ -f "$ca_cert" ]] || fail "CA certificate not found at $ca_cert"
 
-  info "Testing connection to Elasticsearch at https://127.0.0.1:${ES_HOST_PORT}..."
+  info "Testing connection to Elasticsearch at $es_url..."
   info "Using credentials: $ELASTIC_USERNAME"
+  info "Using certificate: $ca_cert"
   
   if curl -fsSL --cacert "$ca_cert" -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" "$es_url" >/dev/null 2>&1; then
     ok "Successfully connected to Elasticsearch"
   else
     warn "Connection attempt failed. Debugging information:"
     echo ""
-    curl -v --cacert "$ca_cert" -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" "$es_url" 2>&1 | head -40 || true
+    curl -v --cacert "$ca_cert" -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" "$es_url" 2>&1 | head -50 || true
     echo ""
     fail "Failed to connect to Elasticsearch. Verify credentials, port, and that the cluster is healthy."
   fi
