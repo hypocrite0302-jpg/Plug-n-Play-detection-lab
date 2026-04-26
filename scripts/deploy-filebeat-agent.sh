@@ -168,8 +168,8 @@ install_filebeat() {
     filebeat version 2>&1 | head -1 || true
   else
     info "Adding Elastic APT repository..."
-    curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch | apt-key add -
-    sh -c 'echo "deb https://artifacts.elastic.co/packages/9.x/apt stable main" > /etc/apt/sources.list.d/elastic-9.x.list'
+    curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch | gpg --dearmor -o /usr/share/keyrings/elasticsearch-keyring.gpg
+    sh -c 'echo "deb [signed-by=/usr/share/keyrings/elasticsearch-keyring.gpg] https://artifacts.elastic.co/packages/9.x/apt stable main" > /etc/apt/sources.list.d/elastic-9.x.list'
     apt-get update -y
 
     info "Installing Filebeat..."
@@ -251,6 +251,17 @@ EOF
   ok "Reference copy at $lab_config"
 }
 
+validate_filebeat_config() {
+  info "Validating Filebeat configuration..."
+  if filebeat test config -c /etc/filebeat/filebeat.yml >/dev/null 2>&1; then
+    ok "Configuration is valid"
+  else
+    warn "Configuration validation failed:"
+    filebeat test config -c /etc/filebeat/filebeat.yml 2>&1 | head -20 || true
+    fail "Please check the configuration and try again."
+  fi
+}
+
 start_filebeat() {
   info "Enabling and starting Filebeat service..."
 
@@ -267,7 +278,13 @@ start_filebeat() {
   if systemctl is-active --quiet filebeat; then
     ok "Filebeat service started successfully"
   else
-    fail "Filebeat service failed to start. Check logs: systemctl status filebeat"
+    warn "Filebeat service failed to start. Diagnostic information:"
+    echo ""
+    systemctl status filebeat --no-pager || true
+    echo ""
+    info "Last 30 lines of Filebeat logs:"
+    journalctl -u filebeat -n 30 --no-pager || tail -30 /var/log/filebeat/filebeat.log || true
+    fail "Please review the logs above and ensure the Elasticsearch cluster is accessible."
   fi
 }
 
@@ -335,6 +352,7 @@ main() {
   install_filebeat
   setup_certificates
   configure_filebeat
+  validate_filebeat_config
   start_filebeat
   verify_logs
 
