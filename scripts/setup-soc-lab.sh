@@ -98,55 +98,6 @@ docker logs ${SERVICE_NAME,,}
 "
 }
 
-ensure_container_name_available() {
-local CONTAINER_NAME="$1"
-local EXPECTED_IMAGE="$2"
-local CONTAINER_ID
-local CONTAINER_IMAGE
-
-CONTAINER_ID="$(sudo docker ps -aq -f "name=^/${CONTAINER_NAME}$" 2>/dev/null || true)"
-
-if [ -z "$CONTAINER_ID" ]; then
-return 0
-fi
-
-CONTAINER_IMAGE="$(sudo docker inspect -f '{{.Config.Image}}' "$CONTAINER_ID" 2>/dev/null || true)"
-
-if [ "$CONTAINER_IMAGE" = "$EXPECTED_IMAGE" ]; then
-echo "[INFO] Removing stale lab container '$CONTAINER_NAME'..."
-sudo docker rm -f "$CONTAINER_ID" >/dev/null || error_exit "
-Failed to remove stale container: $CONTAINER_NAME
-
-Fix:
-docker rm -f $CONTAINER_NAME
-"
-return 0
-fi
-
-error_exit "
-Container name conflict detected for '$CONTAINER_NAME'.
-
-Existing container image:
-$CONTAINER_IMAGE
-
-Fix:
-Rename or remove the conflicting container:
-docker rm -f $CONTAINER_NAME
-
-Then re-run the installer.
-"
-}
-
-cleanup_stale_lab_containers() {
-echo "[INFO] Checking for stale lab containers..."
-
-ensure_container_name_available "elasticsearch" "docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION}"
-ensure_container_name_available "kibana" "docker.elastic.co/kibana/kibana:${ELASTIC_VERSION}"
-ensure_container_name_available "fleet-server" "docker.elastic.co/beats/elastic-agent:${ELASTIC_VERSION}"
-
-echo "[OK] Container names available"
-}
-
 #############################
 # ERROR HANDLER
 #############################
@@ -436,10 +387,6 @@ echo "[OK] Docker compose created"
 ##################################
 
 echo "[INFO] Starting Elastic stack..."
-
-cleanup_stale_lab_containers
-
-sudo docker compose down --remove-orphans >/dev/null 2>&1 || true
 
 sudo docker compose pull || error_exit "
 Image pull failed.
