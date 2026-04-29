@@ -14,8 +14,8 @@ If you are using WSL with Docker Desktop, make sure Docker Desktop is already ru
 ## Clone
 
 ```bash
-git clone https://github.com/hypocrite0302-jpg/Up-skill.git
-cd Up-skill
+git clone https://github.com/hypocrite0302-jpg/Plug-n-Play-detection-lab.git
+cd Plug-n-Play-detection-lab
 ```
 
 ## Install
