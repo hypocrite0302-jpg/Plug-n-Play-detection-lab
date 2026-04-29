@@ -1,0 +1,10 @@
+# SOC lab runtime
+soc-lab/
+elastic-lab/.credentials.env
+elastic-lab/.wsl-retro-ingest-complete
+elastic-lab/filebeat-*.deb
+
+# Local environment
+.vscode/
+*.log
+*.tmp

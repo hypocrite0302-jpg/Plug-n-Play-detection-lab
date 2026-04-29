@@ -1,62 +1,48 @@
 # Up-skill SOC Lab
 
-This repository bootstraps a local detection engineering lab with:
+This repository bootstraps a local Elastic-based detection engineering lab for Ubuntu and WSL. The current build path covers Elasticsearch, Kibana, Fleet Server, Filebeat, secure credential bootstrap, and host telemetry with a WSL-friendly fallback when `auditd` is unavailable.
 
-- Elasticsearch
-- Kibana
-- Fleet Server
-- Filebeat
-- `auditd` process telemetry
-- Atomic Red Team
-- Sigma CLI
+## Core Commands
 
-## Clone
-
-```bash
-git clone https://github.com/hypocrite0302-jpg/Up-skill.git
-cd Up-skill
-```
-
-## Install
-
-Run the full lab setup from the repository root with a single command:
+Install the lab:
 
 ```bash
 bash install.sh
 ```
 
-## Recommended Environment
-
-- Ubuntu VM or Ubuntu on WSL
-- Internet access
-- `sudo` access
-- Docker running if you are using Docker Desktop + WSL integration
-
-## What The Installer Does
-
-`install.sh` is the root entrypoint. It normalizes shell line endings and then runs the main installer in `scripts/setup-soc-lab.sh`.
-
-The installer will:
-
-- Check connectivity
-- Install required packages
-- Install or verify Docker
-- Start Elasticsearch, Kibana, and Fleet Server
-- Install and configure Filebeat
-- Enable `auditd` exec telemetry
-- Clone Atomic Red Team
-- Install Sigma CLI
-
-## Quick Start On A Fresh Ubuntu VM
+Validate the environment before rebuilding:
 
 ```bash
-sudo apt update
-sudo apt install -y git
-git clone https://github.com/hypocrite0302-jpg/Up-skill.git
-cd Up-skill
-bash install.sh
+bash validate.sh
 ```
 
-## Detailed Setup Guide
+Choose a teardown depth when needed:
 
-For a fuller walkthrough, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
+```bash
+bash scripts/bomber-soc-lab.sh --profile light
+bash scripts/bomber-soc-lab.sh --profile mid
+bash scripts/bomber-soc-lab.sh --profile heavy
+```
+
+## What The Installer Handles
+
+- dependency and Docker validation
+- secure Elasticsearch and Kibana startup ordering
+- Kibana UI credential creation
+- Filebeat version pinning to the stack version
+- Filebeat config, output, and setup validation
+- post-install confirmation that `filebeat-*` data is present
+- `auditd` enablement on Linux hosts that support it
+- WSL fallback telemetry using Bash history, host logs, and Docker container logs
+- one-time retrospective WSL backfill of existing log files on first successful install
+
+Runtime credentials are stored in:
+
+```bash
+~/soc-lab/.credentials.env
+```
+
+## Repo Guide
+
+- setup guide: [docs/INSTALLATION.md](docs/INSTALLATION.md)
+- Windows extension backlog: [TODO-WINDOWS-DEPLOYMENT.md](TODO-WINDOWS-DEPLOYMENT.md)

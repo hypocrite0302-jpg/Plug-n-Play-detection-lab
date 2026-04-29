@@ -1,119 +1,98 @@
 # Installation Guide
 
-This guide shows how to download the repository and run the SOC lab installer from a Linux VM or WSL environment.
-
-## Repository Link
-
-HTTPS clone URL:
-
-```bash
-https://github.com/hypocrite0302-jpg/Up-skill.git
-```
-
-Clone command:
-
-```bash
-git clone https://github.com/hypocrite0302-jpg/Up-skill.git
-```
-
-## Recommended Target
-
-Use one of these:
-
-- Ubuntu virtual machine
-- Ubuntu on WSL
+This repo is designed to be run from Ubuntu or Ubuntu on WSL.
 
 ## Prerequisites
 
-Before running the installer, make sure:
+- internet access
+- `sudo` access
+- `git`
+- Docker available in the Linux environment
 
-- You have internet access
-- You can run `sudo`
-- `git` is installed
-- If you are using WSL with Docker Desktop, Docker Desktop is running and WSL integration is enabled
+If you are using WSL with Docker Desktop, make sure Docker Desktop is already running and WSL integration is enabled.
 
-## Step 1: Install Git If Needed
-
-```bash
-sudo apt update
-sudo apt install -y git
-```
-
-## Step 2: Clone The Repository
+## Clone
 
 ```bash
 git clone https://github.com/hypocrite0302-jpg/Up-skill.git
 cd Up-skill
 ```
 
-## Step 3: Run The Installer
-
-From the repository root:
+## Install
 
 ```bash
 bash install.sh
 ```
 
-This is the only command you need to run for the lab bootstrap.
+The installer:
 
-## What `install.sh` Does
+- validates dependencies and ports
+- bootstraps Elasticsearch, Kibana, and Fleet Server
+- generates Elastic and Kibana credentials
+- pins Filebeat to the lab stack version
+- validates Filebeat config and connectivity
+- confirms `filebeat-*` ingestion before declaring success
 
-The root installer:
+On WSL, `auditd` is skipped and Filebeat is configured to ingest Bash history, host log files, and Docker container logs instead. The first successful WSL install also resets the Filebeat cursor once so existing local logs are backfilled into Elasticsearch retrospectively.
 
-- Uses `install.sh` as the single entrypoint
-- Normalizes Windows-style line endings if the repo was prepared on Windows
-- Delegates to `scripts/setup-soc-lab.sh`
+## Validate Before Rebuild
 
-The setup script then:
+```bash
+bash validate.sh
+```
 
-- Checks internet connectivity
-- Installs dependencies
-- Installs or verifies Docker
-- Creates and starts the Elastic stack
-- Waits for Elasticsearch and Kibana to become reachable
-- Installs Filebeat
-- Configures Filebeat to ship host logs
-- Enables `auditd` exec telemetry
-- Pulls Atomic Red Team
-- Installs Sigma CLI
+The validator now scans the environment and then offers only two interactive choices:
 
-## Expected Access URLs
+- delete blockers
+- quit
 
-After a successful run:
+Useful flags:
+
+```bash
+bash validate.sh --dry-run
+bash validate.sh --deep-clean
+bash validate.sh --yes --deep-clean
+```
+
+## Credentials
+
+The installer saves runtime credentials here:
+
+```bash
+~/soc-lab/.credentials.env
+```
+
+That file contains:
+
+- the `elastic` superuser password
+- the internal `kibana_system` password
+- the Kibana UI username and password you selected or had auto-generated
+
+## Access
+
+After a successful install:
 
 - Kibana: `http://localhost:5601`
 - Elasticsearch: `http://localhost:9200`
 
-## Rebuild / Rerun
-
-If you need to run the installer again:
-
-```bash
-cd Up-skill
-bash install.sh
-```
-
 ## Teardown
 
-To destroy the lab from the repository root:
+To remove the lab and host-side telemetry changes:
 
 ```bash
 bash scripts/bomber-soc-lab.sh
 ```
 
-## Troubleshooting
+Available teardown profiles:
 
-If the installer stops early, check these first:
+- `light`: remove rebuildable generated config/runtime files only
+- `mid`: remove the full lab footprint, including containers, volumes, Filebeat, and telemetry hooks
+- `heavy`: remove everything from `mid`, then also remove Docker packages/data and the helper Linux user
 
-- Docker is running
-- Ports `9200`, `5601`, and `8220` are free
-- The VM still has internet access
-- You are running inside Linux/WSL, not PowerShell directly
-
-Useful commands:
+Examples:
 
 ```bash
-docker ps
-docker logs elasticsearch
-docker logs kibana
+bash scripts/bomber-soc-lab.sh --profile light
+bash scripts/bomber-soc-lab.sh --profile mid
+bash scripts/bomber-soc-lab.sh --profile heavy
 ```
